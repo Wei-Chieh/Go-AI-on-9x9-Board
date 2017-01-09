@@ -5,6 +5,13 @@
  *
  * 2015 Nov. Hung-Jui Chang
  * */
+
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <fstream>
+#include <unistd.h>
+#include <iomanip>
+
 #include <iostream>
 #include <cstdio>
 #include <cstring>
@@ -14,12 +21,11 @@
 #include <time.h>
 #include "Node.h"
 #include "String.h"
-//#include "myUsage.h"
 
 #define BOARDSIZE        9
 #define BOUNDARYSIZE    11
 #define COMMANDLENGTH 1000
-#define DEFAULTTIME     10
+#define DEFAULTTIME      3
 #define DEFAULTKOMI      7
 
 #define MAXGAMELENGTH 1000
@@ -55,11 +61,38 @@ const char LabelX[]="0ABCDEFGHJ";
 int COUNT = 0;
 int PRUNE = 0;
 int move_list[81];
-//MyUsage usage;
 
 void record(int[BOUNDARYSIZE][BOUNDARYSIZE], int[MAXGAMELENGTH][BOUNDARYSIZE][BOUNDARYSIZE], int);
 double final_score(int[BOUNDARYSIZE][BOUNDARYSIZE]);
 int do_move(int[BOUNDARYSIZE][BOUNDARYSIZE], String*[BOUNDARYSIZE][BOUNDARYSIZE], int&, String*[200], int, int);
+
+void print(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUNDARYSIZE][BOUNDARYSIZE]) {
+	cerr << endl;
+	for (int i = 1; i < BOUNDARYSIZE - 1; ++i) {
+		for (int j = 1; j < BOUNDARYSIZE - 1; ++j) {
+			if (Board[i][j] == 1) cerr << setw(2) << 'X';
+			else if (Board[i][j] == 2) cerr << setw(2) << 'O';
+			else cerr << setw(2) << '.';
+		}
+		cerr << "   ";
+		for (int j = 1; j < BOUNDARYSIZE - 1; ++j) {
+			if (sBoard[i][j] == NULL) cerr << setw(2) << '.';
+			else cerr << setw(2) << sBoard[i][j]->location;
+		}
+		cerr << "   ";
+		for (int j = 1; j < BOUNDARYSIZE - 1; ++j) {
+			if (sBoard[i][j] == NULL) cerr << setw(2) << '.';
+			else cerr << setw(2) << sBoard[i][j]->size;
+		}
+		cerr << "   ";
+		for (int j = 1; j < BOUNDARYSIZE - 1; ++j) {
+			if (sBoard[i][j] == NULL) cerr << setw(2) << '.';
+			else cerr << setw(2) << sBoard[i][j]->liberty;
+		}
+		cerr << endl;
+	}
+	cerr << endl;
+}
 
 /*
  * This function reset the board, the board intersections are labeled with 0,
@@ -168,7 +201,8 @@ void count_neighboorhood_state(int Board[BOUNDARYSIZE][BOUNDARYSIZE], int X, int
  * And return the number of remove stones.
  * */
 int remove_piece(int Board[BOUNDARYSIZE][BOUNDARYSIZE], int X, int Y, int turn) {
-    int remove_stones = (Board[X][Y] == EMPTY)? 0:1;
+    if (Board[X][Y] == EMPTY) return 0;
+	int remove_stones = 1;
     Board[X][Y] = EMPTY;
     for (int d = 0; d < MAXDIRECTION; ++d) {
 		if (Board[X+DirectionX[d]][Y+DirectionY[d]] == turn) {
@@ -214,7 +248,7 @@ bool check_legal(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUNDARYS
 	int oppo = (turn == BLACK) ? WHITE : BLACK;
 	int bound = 0, empty = 0, self = 0, self_n = 0, self_s = 0;
 	String* s[4];
-	bool exist, c_empty = true;
+	bool c_empty = true;
 	if (Board[x][y]) return false;
 	for (i = 0; i < MAXDIRECTION; ++i) {
 		x2 = x + CornerX[i], y2 = y + CornerY[i];
@@ -231,17 +265,12 @@ bool check_legal(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUNDARYS
 		else {
 			++self;
 			if (sBoard[x2][y2]->liberty == 1) ++self_n;
-			exist = false;
 			for (j = 0; j < self_s; ++j) {
-				if (sBoard[x2][y2] == s[j]) {
-					exist = true;
-					break;
-				}
+				if (sBoard[x2][y2] == s[j]) goto cont;
 			}
-			if (!exist) {
-				s[self_s] = sBoard[x2][y2];
-				++self_s;
-			}
+			s[self_s] = sBoard[x2][y2];
+			++self_s;
+cont:;
 		}
 	}
 	if (bound && bound + empty == 4 && c_empty) return false;
@@ -263,38 +292,29 @@ int gen_legal_move(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUNDAR
 				}
 			}
 			move = x * 10 + y;
-			if (check_legal(Board, sBoard, turn, move, ko)) {
-				if (!game_length) {
-					MoveList[legal_moves] = x * 10 + y;
-					++legal_moves;
-					continue;
-				}
-				for (int i = 0; i < BOUNDARYSIZE; ++i) {
-					for (int j = 0; j < BOUNDARYSIZE; ++j) {
-						NextBoard[i][j] = Board[i][j];
-					}
-				}
-				update_board(NextBoard, x, y, turn);
-				bool repeat_move = 0;
-				for (int t = 0; t < game_length; ++t) {
-					bool repeat_flag = 1;
-					for (int i = 1; i <= BOARDSIZE; ++i) {
-						for (int j = 1; j <= BOARDSIZE; ++j) {
-							if (NextBoard[i][j] != GameRecord[t][i][j]) {
-								repeat_flag = 0;
-							}
-						}
-					}
-					if (repeat_flag == 1) {
-						repeat_move = 1;
-						break;
-					}
-				}
-				if (repeat_move == 0) {
-					MoveList[legal_moves] = x * 10 + y;
-					++legal_moves;
+			if (!check_legal(Board, sBoard, turn, move, ko)) goto illegal;
+			if (!game_length) goto legal;
+			for (int i = 0; i < BOUNDARYSIZE; ++i) {
+				for (int j = 0; j < BOUNDARYSIZE; ++j) {
+					NextBoard[i][j] = Board[i][j];
 				}
 			}
+			update_board(NextBoard, x, y, turn);
+			for (int t = 0; t < game_length; ++t) {
+				for (int i = 1; i <= BOARDSIZE; ++i) {
+					for (int j = 1; j <= BOARDSIZE; ++j) {
+						if (NextBoard[i][j] != GameRecord[t][i][j]) {
+							goto different;
+						}
+					}
+				}
+				goto illegal;
+different:;
+			}
+legal:;
+			MoveList[legal_moves] = x * 10 + y;
+			++legal_moves;
+illegal:;
 		}
 	}
 	return legal_moves;
@@ -303,11 +323,22 @@ int gen_legal_move(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUNDAR
 /*
  * This function randomly selects one move from the MoveList.
  * */
-int rand_pick_move(int num_legal_moves, int MoveList[HISTORYLENGTH]) {
+int rand_pick_move(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String * sBoard[BOUNDARYSIZE][BOUNDARYSIZE], int string_num, String* strings[200], int turn, int num_legal_moves, int MoveList[HISTORYLENGTH]) {
     if (num_legal_moves == 0)
 		return 0;
     else {
 		int move_id = rand() % num_legal_moves;
+		int next_turn = (turn == BLACK) ? WHITE : BLACK;
+		
+		int NextBoard[BOUNDARYSIZE][BOUNDARYSIZE];
+		for (int a = 0; a < BOUNDARYSIZE; ++a) {
+			for (int b = 0; b < BOUNDARYSIZE; ++b) {
+				NextBoard[a][b] = Board[a][b];
+			}
+		}
+		
+		int ko = do_move(NextBoard, sBoard, string_num, strings, turn, MoveList[move_id]);
+		MCS_sim(NextBoard, sBoard, string_num, strings, next_turn, ko, false);
 		return MoveList[move_id];
     }
 }
@@ -327,7 +358,10 @@ int MCS_sim(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String * sBoard[BOUNDARYSIZE]
 		if (check_legal(Board, sBoard, turn, move, ko)) break;
 		rand_list[idx] = rand_list[--size];
 		if (!size) {
-			if (pass) return (int)final_score(Board);
+			if (pass) {
+				//cerr << (int)final_score(Board) << endl;
+				return (int)final_score(Board);
+			}
 			else {
 				next_ko = 0;
 				return MCS_sim(Board, sBoard, string_num, strings, next_turn, next_ko, true);
@@ -335,6 +369,7 @@ int MCS_sim(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String * sBoard[BOUNDARYSIZE]
 		}
 	}
 	next_ko = do_move(Board, sBoard, string_num, strings, turn, move);
+	//print(Board, sBoard);
 	return MCS_sim(Board, sBoard, string_num, strings, next_turn, next_ko, false);
 }
 
@@ -432,52 +467,36 @@ int do_move(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUNDARYSIZE][
 	int oppo = (turn == BLACK) ? WHITE : BLACK;
 	String *s[4], *o[4], *e[4];
 	int s_num = 0, o_num = 0, e_num = 0;
-	bool exist;
 	for (i = 0; i < 4; ++i) {
-		exist = false;
 		x2 = x + DirectionX[i], y2 = y + DirectionY[i];
 		if (Board[x2][y2] == turn) {
 			for (j = 0; j < s_num; ++j) {
-				if (sBoard[x2][y2] == s[j]) {
-					exist = true;
-					break;
-				}
+				if (sBoard[x2][y2] == s[j]) goto exist;
 			}
-			if (!exist) {
-				s[s_num] = sBoard[x2][y2];
-				++s_num;
-			}
+			s[s_num] = sBoard[x2][y2];
+			++s_num;
 		}
 		else if (Board[x2][y2] == oppo) {
 			if (sBoard[x2][y2]->liberty == 1) {
 				++liberty;
 				for (j = 0; j < e_num; ++j) {
-					if (sBoard[x2][y2] == e[j]) {
-						exist = true;
-						break;
-					}
+					if (sBoard[x2][y2] == e[j]) goto exist;
 				}
-				if (!exist) {
-					e[e_num] = sBoard[x2][y2];
-					++e_num;
-				}
+				e[e_num] = sBoard[x2][y2];
+				++e_num;
 			}
 			else {
 				for (j = 0; j < o_num; ++j) {
-					if (sBoard[x2][y2] == o[j]) {
-						exist = true;
-						break;
-					}
+					if (sBoard[x2][y2] == o[j]) goto exist;
 				}
-				if (!exist) {
-					o[o_num] = sBoard[x2][y2];
-					++o_num;
-				}
+				o[o_num] = sBoard[x2][y2];
+				++o_num;
 			}
 		}
 		else if (Board[x2][y2] == EMPTY) ++liberty;
+exist:;
 	}
-	for (i = 0; i < o_num; ++i) --o[i]->liberty;
+	for (i = 0; i < o_num; ++i) --(o[i]->liberty);
 	if (e_num == 1 && s_num == 0 && e[0]->size == 1) ko = e[0]->member[0][0] * 10 + e[0]->member[0][1];
 	for (i = 0; i < e_num; ++i) e[i]->remove(Board, sBoard, strings);
 	Board[x][y] = turn;
@@ -518,8 +537,8 @@ void construct_string(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUN
 	int x2, y2;
 	s->push_back(x, y);
 	sBoard[x][y] = s;
-	for (int i = 0; i < MAXDIRECTION; ++i) {
-		x2 = x + DirectionX[i], y2 = y + DirectionY[i];
+	for (int d = 0; d < MAXDIRECTION; ++d) {
+		x2 = x + DirectionX[d], y2 = y + DirectionY[d];
 		if (Board[x2][y2] == Board[x][y] && sBoard[x2][y2] == NULL)
 			construct_string(Board, sBoard, x2, y2, s);
 	}
@@ -551,13 +570,14 @@ int find_string(int Board[BOUNDARYSIZE][BOUNDARYSIZE], String* sBoard[BOUNDARYSI
  * if there is no legal move the function will return 0.
  * */
 int genmove(int Board[BOUNDARYSIZE][BOUNDARYSIZE], int turn, int time_limit, int game_length, int GameRecord[MAXGAMELENGTH][BOUNDARYSIZE][BOUNDARYSIZE]) {
-    clock_t start_t, end_t;
+    int zzz = ftruncate(2, 0);
+	zzz = lseek(2, 0, SEEK_SET);
+	
+	clock_t start_t, end_t;
     // record start time
     start_t = clock();
     // calculate the time bound
 	end_t = start_t + CLOCKS_PER_SEC * time_limit;
-
-	//usage.setTimeUsage();
 
 	String* sBoard[BOUNDARYSIZE][BOUNDARYSIZE];
 	String* strings[200];
@@ -570,15 +590,21 @@ int genmove(int Board[BOUNDARYSIZE][BOUNDARYSIZE], int turn, int time_limit, int
 
 	num_legal_moves = gen_legal_move(Board, sBoard, turn, game_length, GameRecord, MoveList, 0, true);
 
-    //return_move = rand_pick_move(num_legal_moves, MoveList);
+    //return_move = rand_pick_move(Board, sBoard, string_num, strings, turn, num_legal_moves, MoveList);
 	//return_move = MCSpure_pick_move(Board, sBoard, string_num, strings, turn, num_legal_moves, MoveList, end_t);
 	return_move = UCT_pick_move(Board, sBoard, string_num, strings, turn, num_legal_moves, MoveList, end_t);
-	update_board(Board, return_move / 10, return_move % 10, turn);
+	//update_board(Board, return_move / 10, return_move % 10, turn);
 
+	int ko = do_move(Board, sBoard, string_num, strings, turn, return_move);
+	print(Board, sBoard);
+	cerr << "ko = " << ko << endl;
+	for (int i = 0; i < string_num; ++i) {
+		if (strings[i] != NULL) cerr << strings[i]->location << " " << strings[i]->size << " " << strings[i]->liberty << endl;
+	}
+	
 	for (int i = 0; i < string_num; ++i) {
 		if (strings[i] != NULL) delete strings[i];
 	}
-	//usage.report(true, true);
 	//cerr << (double)(clock() - start_t) / CLOCKS_PER_SEC << endl;
     return return_move;
 }
@@ -866,6 +892,11 @@ int main(int argc, char* argv[]) {
 	srand((unsigned int)time(NULL));
 	for (int i = 0; i < 81; ++i)
 		move_list[i] = (i / 9) * 10 + (i % 9) + 11;
+	
+	int fd = open("log", O_WRONLY | O_CREAT, 0);
+	dup2(fd, 2);
+	close(fd);
+	
     gtp_main(display);
     return 0;
 }

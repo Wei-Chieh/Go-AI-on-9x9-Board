@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include <stdlib.h>
 #include <vector>
 #include <math.h>
@@ -6,7 +7,7 @@
 #define BOARDSIZE        9
 #define BOUNDARYSIZE    11
 #define COMMANDLENGTH 1000
-#define DEFAULTTIME     10
+#define DEFAULTTIME      3
 #define DEFAULTKOMI      7
 
 #define MAXGAMELENGTH 1000
@@ -36,6 +37,7 @@ int max(vector<Node*> *, double);
 int MCS_sim(int[BOUNDARYSIZE][BOUNDARYSIZE], String*[BOUNDARYSIZE][BOUNDARYSIZE], int&, String*[200], int, int, bool);
 int gen_legal_move(int[BOUNDARYSIZE][BOUNDARYSIZE], String*[BOUNDARYSIZE][BOUNDARYSIZE], int, int, int[MAXGAMELENGTH][BOUNDARYSIZE][BOUNDARYSIZE], int[HISTORYLENGTH], int, bool);
 int do_move(int[BOUNDARYSIZE][BOUNDARYSIZE], String*[BOUNDARYSIZE][BOUNDARYSIZE], int&, String*[200], int, int);
+void print(int [BOUNDARYSIZE][BOUNDARYSIZE], String* [BOUNDARYSIZE][BOUNDARYSIZE]);
 
 class Node {
 public:
@@ -84,7 +86,9 @@ public:
 		String* NextsBoard[BOUNDARYSIZE][BOUNDARYSIZE];
 		String* next_strings[200];
 		int next_string_num;
+		int next_turn = (turn == BLACK) ? WHITE : BLACK;
 		int a, b;
+		//print(Board, sBoard);
 		for (int i = 0; i < 4; ++i) {
 			for (a = 0; a < BOUNDARYSIZE; ++a) {
 				for (b = 0; b < BOUNDARYSIZE; ++b) {
@@ -101,7 +105,7 @@ public:
 				}
 			}
 			//cerr << string_num << " " << ko << " " << turn << endl;
-			score = (double)MCS_sim(NextBoard, NextsBoard, next_string_num, next_strings, turn, ko, false) / 81;
+			score = (double)MCS_sim(NextBoard, NextsBoard, next_string_num, next_strings, next_turn, ko, false) / 81;
 			for (int i = 0; i < next_string_num; ++i) {
 				if (next_strings[i] != NULL) delete next_strings[i];
 			}
@@ -110,8 +114,10 @@ public:
 			++num;
 			extern int COUNT;
 			++COUNT;
+			//cerr << score << " ";
 		}
 		update(square, sum, num, false);
+		//cerr << score_sum / score_num << endl;
 	}
 
 	void update(double square, double sum, int num, bool prune) {
